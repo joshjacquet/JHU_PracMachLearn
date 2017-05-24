@@ -1,0 +1,118 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Josh Jacquet"
+date: "May 23, 2017"
+output: html_document
+---
+
+# Background  
+In short - classifying the quality of activity through accelerometer data.
+
+**Below methodology settles on a Random Forest model over a Decision Tree, finding an estimated out-of-sample accuracy of 99.4%.**
+
+Further information about the data: http://groupware.les.inf.puc-rio.br/har
+
+Full description of the project found on Coursera, where I'm sure you're from since you're reading this.
+
+Report does the following:  
+
+* Describe how the model was built  
+* How cross-validation was used  
+* What is the expected out of sample error  
+* Why choices were made the way they were  
+* Predict on 20 different test cases  
+
+
+# Data Prep  
+### How the models were built, and How Cross-Validation was used.
+Below walks through data loading, feature selection, model training, and cross-validation using the **caret** package.
+
+1) Downloaded data from the internet using **RCurl** library.  
+2) Created data split within the downloaded training set. There is a significant number of records in the downloaded training set which make this method of cross-validation suitable. Had there been fewer, we would have used k-folds, bootstrapping, or another cross-validation technique. Here, I used a split of 70/30.  
+3) Dropped columns which were not suitable for predicting. These include the record index, the user's name, and timestamps. These values do not actually predict the quality of the movement, and if signficant would have lead us astray.  
+4) Dropped rows & columns which did not contain all of the suitable information. These were primarily rows which summarized the window. Columns dropped were those which summarized the window as well.  
+5) Used distributed computing on 4 cores to run these models. I didn't have the patience to wait for Random Forest to run for two hours. Plan a reproduction accordingly.
+
+```{r dataprep, results = 'hide', message = FALSE, warning = FALSE}
+##SET WORKSPACE TO BE THAT OF GITHUB REPO##
+setwd("~/JHU_PracMachLearn")
+
+##DOWNLOAD DATA FROM INTERNET##
+library(RCurl)
+trainurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainlink <- getURL(trainurl)
+testlink <- getURL(testurl)
+train <- read.csv(textConnection(trainlink))
+test <- read.csv(textConnection(testlink))
+rm(testlink, testurl, trainlink, trainurl) #cleaning up workspace
+
+##SETTING UP DATA SPLIT CROSS VALIDATION METHOD##
+library(caret)
+library(doMC)
+set.seed(0831)
+inTrain <- createDataPartition(train$classe, p = 0.7, list = FALSE)
+trn <- train[inTrain,]
+tst <- train[-inTrain,]
+rm(inTrain) #cleaning up workspace
+
+##DROPPING IRRELEVANT RECORDS AND COLUMNS TO PREDICTION##
+drops <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2"
+           , "cvtd_timestamp", "new_window", "num_window")
+`%ni%` <- Negate(`%in%`)
+trn <- trn[trn$new_window == "no",]
+tst <- tst[tst$new_window == "no",] #only rows without the new window rows
+trn <- trn[, colSums(is.na(trn)) == 0]
+tst <- tst[, colSums(is.na(tst)) == 0] #no columns with NA
+trn <- trn[, colSums(trn != "") != 0]
+tst <- tst[, colSums(tst != "") != 0] #no columns with blank values
+trn <- subset(trn, select = names(trn) %ni% drops)
+tst <- subset(tst, select = names(tst) %ni% drops) #drop other non-predictive fields
+
+##TRAINING DECISION TREE AND RANDOM FOREST MODELS USING DISTRIBUTED COMPUTING##
+registerDoMC(4)
+set.seed(0831)
+rpart <- train(classe ~ ., method = "rpart", data = trn)
+#set.seed(0831)
+#rf <- train(classe ~ ., method = "rf", data = trn)
+load("rf.RModel") 
+##NOTE: Rather than re-training model every time I built this report or ran the script, I instead saved the model as an 'RModel' file. This is in github repo.##
+```
+
+# Model Evaluation  
+### Decision Tree
+The first model trained was a Decision Tree. By viewing a confusion matrix, we see that the in-sample accuracy was **terrible**. No records were classified D, and the Accuracy was under 0.5.
+
+```{r rpart}
+confusionMatrix(predict(rpart), trn$classe)
+```
+
+Moving on from the Decision Tree and not even wasting time running through multiple charts and checking out of sample accuracy. Moving on to Random Forest.
+
+### Random Forest (Winner)
+The second model trained was a Random Forest. Confusion matrix below shows a perfect classification of the records. Usually, this is a sure-sign of over-fitting, and made me quite worried.
+
+However, when cross-validated with the data split, accuracy remained at 99.4%. This eased the worry of severe over-fitting.
+```{r rf, warning = FALSE, message = FALSE}
+confusionMatrix(predict(rf), trn$classe) #in-sample confusion matrix
+confusionMatrix(predict(rf, newdata = tst), tst$classe) #out-of-sample confusion matrix
+```
+
+**After cross-validation, the expected out-of-sample error is 1-0.9936, or *0.64%*.**
+
+### Decisions and how/why they were made
+I trained two models, and the one with the best accuracy won out. Once I ran Random Forest and saw a perfect classification and a good out of sample error, I stopped training more models.
+
+In regards to feature selection, it was a matter of scrolling through the data and summarizing it. In the end, it came down to 'what actually determines proper form?'. By thinking about this question, the summary rows didn't make a difference, as everything we needed to know was in the other rows. Additionally, columns that don't tell us anything about the form had to go as well. The time doesn't determine the form, the name of the person doesn't determine the form, it comes down to *what the body actually does at every point through the exercise* that matters.
+
+### Predicting on a test set  
+Predictions for the test set are as follows. These are to be used on the quiz.
+```{r test}
+test$predict <- predict(rf, newdata = test)
+print(test$predict)
+summary(test$predict)
+```
+
+### Thank you for reading.
+
+# Post-Script: Quiz Grade = 100%.
